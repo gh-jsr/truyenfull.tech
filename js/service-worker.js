@@ -1,30 +1,27 @@
-const CACHE_NAME = 'truyen-cache-v1.7.3';
+const CACHE_NAME = 'truyen-cache-v2.0.0';
 const CACHE_DURATION = 300 * 1000; // tính bằng milliseconds
 
-// Danh sách tài nguyên cần pre-cache
-const PRECACHE_URLS = [
-  '/',
-  '/offline/',
-  'https://cdn.jsdelivr.net/',
-  '/manifest.json'
-];
-
+// Install event - khởi tạo cache
 self.addEventListener('install', (event) => {
+  console.log('Service Worker installing...');
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      // Thêm pre-caching cho các tài nguyên quan trọng
-      return cache.addAll(PRECACHE_URLS);
+      console.log('Cache opened');
+      return cache;
     })
   );
   self.skipWaiting();
 });
-
+  
+// Activate event - dá»n dáº¹p cache cÅ©
 self.addEventListener('activate', (event) => {
+  console.log('Service Worker activating...');
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
           if (cacheName !== CACHE_NAME) {
+            console.log('Deleting old cache:', cacheName);
             return caches.delete(cacheName);
           }
         })
@@ -34,180 +31,180 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// Fetch event - xá»­ lÃ½ cÃ¡c request
 self.addEventListener('fetch', (event) => {
+  // Chá»‰ xá»­ lÃ½ GET requests
   if (event.request.method !== 'GET') {
     return;
   }
 
+  // Bá» qua cÃ¡c request tá»›i tÃªn miá»n fb
   const url = new URL(event.request.url);
   if (
     url.origin.includes('chrome-extension') ||
-    url.hostname.includes('umami') ||
+    url.hostname.includes('facebook.com') ||
+    url.hostname.includes('fb.com') ||
     url.hostname.includes('spreadsheets') ||
     url.pathname.startsWith('/api') ||
-    url.pathname.startsWith('/ajax') ||
-    url.pathname.startsWith('/wp-json') ||
-    url.pathname.startsWith('/wp-admin')
+    url.pathname.startsWith('/wp-ajax') ||
+    url.pathname.startsWith('/wp-admin') ||
+    url.pathname.startsWith('/wp-login.php') 
   ) {
-    return;
+    // console.log('Bỏ qua service worker cho request:', event.request.url);
+    return; // Không gọi event.respondWith, để trình duyệt xử lý trực tiếp
   }
-
-  // Chiến lược khác nhau cho từng loại tài nguyên
-  if (url.pathname.match(/\.(jpg|jpeg|png|gif|webp|svg|ico)$/)) {
-    // Cache-first cho hình ảnh
-    event.respondWith(handleImageRequest(event.request));
-  } else if (url.pathname.match(/\.(css|js)$/)) {
-    // Network-first cho CSS và JS
-    event.respondWith(handleAssetRequest(event.request));
-  } else {
-    // Stale-while-revalidate cho HTML và các tài nguyên khác
-    event.respondWith(handleRequest(event.request));
-  }
+  
+  event.respondWith(handleRequest(event.request));
 });
 
-// Xử lý hình ảnh - Cache First Strategy
-async function handleImageRequest(request) {
-  const cache = await caches.open(CACHE_NAME);
-  const cachedResponse = await cache.match(request);
-
-  if (cachedResponse) {
-    return cachedResponse;
-  }
-
-  try {
-    const networkResponse = await fetch(request);
-
-    if (networkResponse.ok) {
-      await cache.put(request, networkResponse.clone());
-    }
-
-    return networkResponse;
-  } catch (error) {
-    console.error('Error fetching image:', error);
-    return new Response('Image not available', { status: 404 });
-  }
-}
-
-// Xử lý CSS/JS - Network First Strategy
-async function handleAssetRequest(request) {
-  try {
-    const networkResponse = await fetch(request);
-
-    if (networkResponse.ok) {
-      const cache = await caches.open(CACHE_NAME);
-      await cache.put(request, networkResponse.clone());
-    }
-
-    return networkResponse;
-  } catch (error) {
-    console.error('Error fetching asset:', error);
-
-    const cache = await caches.open(CACHE_NAME);
-    const cachedResponse = await cache.match(request);
-
-    if (cachedResponse) {
-      return cachedResponse;
-    }
-
-    return new Response('Asset not available', { status: 404 });
-  }
-}
-
-// Giữ nguyên hàm handleRequest của bạn với một số cải tiến
 async function handleRequest(request) {
   try {
     const cache = await caches.open(CACHE_NAME);
     const cachedResponse = await cache.match(request);
-
+    
+    // Kiá»ƒm tra xem cÃ³ cache khÃ´ng
     if (cachedResponse) {
       const cacheTimestamp = cachedResponse.headers.get('x-cache-timestamp');
       const currentTime = Date.now();
-
+      
+      // Kiá»ƒm tra xem cache cÃ³ cÃ²n há»£p lá»‡ khÃ´ng (trong vÃ²ng 20 giÃ¢y)
       if (cacheTimestamp && (currentTime - parseInt(cacheTimestamp)) < CACHE_DURATION) {
-        // Thêm cập nhật cache trong nền
-        updateCacheInBackground(request, cache);
+        // console.log('Láº¥y cache:', request.url);
         return cachedResponse;
       } else {
+        // console.log('Cache háº¿t háº¡n, xÃ³a khá»i cache:', request.url);
+        // XÃ³a cache Ä‘Ã£ háº¿t háº¡n
         await cache.delete(request);
       }
     }
-
+    
+    // Fetch tá»« server
+    // console.log('Láº¥y dá»¯ liá»‡u má»›i:', request.url);
     const networkResponse = await fetch(request);
-
+    
+    // Chá»‰ cache cÃ¡c response thÃ nh cÃ´ng
     if (networkResponse.ok) {
+      // Clone response Ä‘á»ƒ cÃ³ thá»ƒ cache vÃ  return
       const responseToCache = networkResponse.clone();
-
+      
+      // Táº¡o response má»›i vá»›i timestamp header
       const headers = new Headers(responseToCache.headers);
       headers.set('x-cache-timestamp', Date.now().toString());
-
+      
       const cachedResponse = new Response(await responseToCache.blob(), {
         status: responseToCache.status,
         statusText: responseToCache.statusText,
         headers: headers
       });
-
+      
+      // LÆ°u vÃ o cache
       await cache.put(request, cachedResponse.clone());
-
+      // console.log('LÆ°u cache:', request.url);
+      
       return cachedResponse;
     }
-
+    
     return networkResponse;
-
+    
   } catch (error) {
     console.error('Error in handleRequest:', error);
-
+    
+    // Náº¿u cÃ³ lá»—i network, thá»­ tráº£ vá» cache cÅ© (ngay cáº£ khi Ä‘Ã£ háº¿t háº¡n)
     const cache = await caches.open(CACHE_NAME);
     const cachedResponse = await cache.match(request);
-
+    
     if (cachedResponse) {
+      console.log('Network failed, serving stale cache:', request.url);
       return cachedResponse;
     }
-
-    // Thêm xử lý trang offline cho HTML requests
-    if (request.mode === 'navigate' || (request.headers.get('accept') && request.headers.get('accept').includes('text/html'))) {
-      const offlineResponse = await cache.match('/offline/');
-      if (offlineResponse) {
-        return offlineResponse;
-      }
-    }
-
-    return new Response('Hãy kiểm tra kết nối mạng của bạn', {
+    
+     // Náº¿u khÃ´ng cÃ³ cache, tráº£ vá» lá»—i
+    return new Response(`
+      <!DOCTYPE html>
+      <html lang="vi">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Lá»—i káº¿t ná»‘i</title>
+      </head>
+      <body style="
+        padding: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(0,0,0,0.9);
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        max-width: 800px;
+        margin: 0 auto;
+      ">
+        <div style="
+          width: 100%;
+          padding: 40px 20px;
+          animation: fadeIn 0.5s ease-in;
+          text-align: center;
+          display: flex;
+          justify-content: center;
+        ">
+          <h1 style="
+            color: #fff;
+            font-size: 22px;
+            line-height: 40px;
+            font-weight: 600;
+            text-align: center;
+            margin: 0;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+          ">
+            HÃ£y kiá»ƒm tra káº¿t ná»‘i máº¡ng cá»§a báº¡n
+            <ul style="
+              padding:0 20px;
+              margin: 0;
+              margin-top: 20px;
+              color: #aeed31;
+              line-height: 30px;
+              font-weight: 400;
+              text-align: left;
+              text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            ">
+              <li style="text-align: left;margin-bottom: 12px;"><a href="https://eyep.blog/EwX5vNgg" style="color: red; text-decoration: underline;" target="_blank">Táº£i á»©ng dá»¥ng</a> vá» Ä‘iá»‡n thoáº¡i cá»§a báº¡n Ä‘á»ƒ Ä‘á»c truyá»‡n khÃ´ng cÃ³ quáº£ng cÃ¡o</li>
+              <li style="text-align: left;margin-bottom: 12px;">HÃ£y thá»­ báº­t wifi/4G/5G Ä‘á»ƒ truy cáº­p láº¡i trang web</li>
+              <li style="text-align: left;margin-bottom: 12px;">Má»Ÿ áº©n danh truy cáº­p láº¡i trang web</li>
+            </ul>
+            Náº¿u khÃ´ng Ä‘Æ°á»£c hÃ£y gá»­i tin nháº¯n cho admin qua zalo: 0976096541, báº¡n Ä‘ang dÃ¹ng máº¡ng vietel, mobifone, vinaphone, fpt, vnpt hay máº¡ng nÃ o khÃ¡c Ä‘á»ƒ admin kiá»ƒm tra vÃ  há»— trá»£ báº¡n.
+          </h1>
+        </div>
+        <style>
+          @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+          }
+        </style>
+      </body>
+      </html>
+    `, {
       status: 503,
-      statusText: 'Service Unavailable'
+      statusText: 'Service Unavailable', 
+      headers: {
+        'Content-Type': 'text/html;charset=UTF-8'
+      }
     });
   }
 }
 
-// Thêm hàm cập nhật cache trong nền
-async function updateCacheInBackground(request, cache) {
-  try {
-    const networkResponse = await fetch(request);
-
-    if (networkResponse.ok) {
-      const responseToCache = networkResponse.clone();
-
-      const headers = new Headers(responseToCache.headers);
-      headers.set('x-cache-timestamp', Date.now().toString());
-
-      const cachedResponse = new Response(await responseToCache.blob(), {
-        status: responseToCache.status,
-        statusText: responseToCache.statusText,
-        headers: headers
-      });
-
-      await cache.put(request, cachedResponse);
-    }
-  } catch (error) {
-    console.error('Error updating cache in background:', error);
-  }
-}
-
+// Xá»­ lÃ½ message tá»« main thread (optional)
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'CLEAR_CACHE') {
     caches.delete(CACHE_NAME).then(() => {
+      console.log('Cache cleared');
+      // Kiá»ƒm tra xem cÃ³ ports khÃ´ng trÆ°á»›c khi gá»­i message
       if (event.ports && event.ports[0]) {
         event.ports[0].postMessage({ success: true });
       }
+      // Hoáº·c gá»­i message vá» client
       if (event.source) {
         event.source.postMessage({ success: true });
       }
@@ -223,92 +220,9 @@ self.addEventListener('message', (event) => {
   }
 });
 
-// Thêm background sync cho form submissions
-self.addEventListener('sync', (event) => {
-  if (event.tag === 'form-submission') {
-    event.waitUntil(handleFormSubmission());
-  }
-});
-
-async function handleFormSubmission() {
-  try {
-    // Mở IndexedDB để lấy dữ liệu form đã lưu
-    // Đây là code mẫu, bạn cần thay đổi để phù hợp với cách lưu trữ của bạn
-    const pendingForms = await getPendingForms();
-
-    for (const form of pendingForms) {
-      try {
-        const response = await fetch(form.url, {
-          method: form.method || 'POST',
-          headers: form.headers || {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: form.body
-        });
-
-        if (response.ok) {
-          // Xóa form đã gửi thành công
-          await removePendingForm(form.id);
-        }
-      } catch (error) {
-        console.error('Error submitting form:', error);
-      }
-    }
-  } catch (error) {
-    console.error('Error in handleFormSubmission:', error);
-  }
+// HÃ m helper Ä‘á»ƒ clear cache thá»§ cÃ´ng (cÃ³ thá»ƒ gá»i tá»« DevTools)
+async function clearCache() {
+  const deleted = await caches.delete(CACHE_NAME);
+  console.log('Cache cleared:', deleted);
+  return deleted;
 }
-
-// Hàm giả định để lấy form từ storage
-async function getPendingForms() {
-  // Trong thực tế, bạn sẽ lấy từ IndexedDB
-  return [];
-}
-
-// Hàm giả định để xóa form đã gửi
-async function removePendingForm(id) {
-  // Trong thực tế, bạn sẽ xóa từ IndexedDB
-}
-
-// Thêm push notifications
-self.addEventListener('push', (event) => {
-  if (!event.data) return;
-
-  let data;
-  try {
-    data = event.data.json();
-  } catch (e) {
-    data = {
-      title: 'Thông báo mới',
-      body: event.data.text(),
-    };
-  }
-
-  const options = {
-    body: data.body || '',
-    icon: data.icon || 'https://cdn.jsdelivr.net/gh/gh-jsr/truyenfull.tech@2.0.0/favicons/favicon-192x192.png',
-    badge: 'https://cdn.jsdelivr.net/gh/gh-jsr/truyenfull.tech@2.0.0/favicons/favicon-96x96.png',
-    vibrate: [100, 50, 100],
-    data: {
-      url: data.url || '/'
-    }
-  };
-
-  event.waitUntil(
-    self.registration.showNotification(data.title, options)
-  );
-});
-
-self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
-
-  if (event.notification.data && event.notification.data.url) {
-    event.waitUntil(
-      clients.openWindow(event.notification.data.url)
-    );
-  } else {
-    event.waitUntil(
-      clients.openWindow('/')
-    );
-  }
-});
